@@ -157,16 +157,23 @@ else:
                             
                     date_context = f"{city}, den {current_date}" if city else current_date
                     
+                    recipient_address_block = [
+                        recipient_company,
+                        recipient_department,
+                        recipient_street,
+                        recipient_city_zip
+                    ]
+                    recipient_address = "\n".join(
+                        filter(None, recipient_address_block)
+                    )
+
                     context = {
                         'sender_name': sender_name,
                         'sender_street': sender_street,
                         'sender_city_zip': sender_city_zip,
                         'sender_phone': sender_phone,
                         'sender_email': sender_email,
-                        'recipient_company': recipient_company,
-                        'recipient_department': recipient_department,
-                        'recipient_street': recipient_street,
-                        'recipient_city_zip': recipient_city_zip,
+                        'recipient_address': recipient_address,
                         'job_title': job_title,
                         'salutation': salutation,
                         'date': date_context,

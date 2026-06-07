@@ -1,81 +1,148 @@
-# applyfly - Secure Document Formatter
+<div align="center">
 
-## System Architecture
-applyfly is a privacy-first web application built with a pure Python, zero-cloud architecture. It uses **Streamlit** for the frontend user interface, a **local SQLite** database (`applyfly_local.db`) for secure data persistence and user authentication, and in-memory rendering (`io.BytesIO`) to generate the document without leaving traces on the disk. This ensures maximum data privacy: no user data, profile information, or generated `.docx` documents are ever sent to external cloud servers. 
+# ✈️ applyfly
 
-## Implementation Roadmap (Step-by-Step)
+**Privacy-First German Cover Letter Generator — DIN 5008 Compliant**
 
-1. **Environment Initialization:**
-   Set up your project environment by installing the required dependencies from the `requirements.txt` file:
-   ```bash
-   pip install -r requirements.txt
-   ```
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.37%2B-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)](https://streamlit.io)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
-2. **Template Construction:**
-   You must manually create a Word document named `din_5008_template.docx` in the root directory.
-   - Set the page margins in Word to adhere to the DIN 5008 standard (Left: 2.5cm, Top: 4.5cm).
-   - Paste the following exact Jinja2 tags into the document layout where appropriate:
-     - `{{ sender_name }}`
-     - `{{ sender_street }}`
-     - `{{ sender_city_zip }}`
-     - `{{ sender_phone }}`
-     - `{{ sender_email }}`
-     - `{{ recipient_company }}`
-     - `{{ recipient_department }}`
-     - `{{ recipient_street }}`
-     - `{{ recipient_city_zip }}`
-     - `{{ date }}`
-     - `{{ job_title }}`
-     - `{{ salutation }}`
-     - `{{ cover_letter_body }}`
+Generate perfectly formatted German cover letters (Anschreiben) that comply with the official **DIN 5008** standard — directly in your browser, with all data stored locally on your machine.
 
-3. **Database Generation:**
-   The local database file (`applyfly_local.db`) will auto-generate upon the first run of the application. It creates all necessary tables for users and sender profiles automatically.
+</div>
 
-4. **Execution:**
-   Start the local server using Streamlit to launch the app:
-   ```bash
-   streamlit run app.py
-   ```
+---
 
-## Deployment Checklist
+## ✨ Features
 
-- [ ] Installing dependencies (`pip install -r requirements.txt`)
-- [ ] Manually building and placing the master `din_5008_template.docx` template in the project root
-- [ ] Testing the sign-up and password hashing flow
-- [ ] Creating a test sender profile
-- [ ] Verifying paragraph spacing works in the generated `.docx` output
+- 📄 **DIN 5008 Compliant** — Correct margins, spacing, layout and font as per the official German business letter standard (Form B)
+- 🔒 **Privacy First** — All data is stored in a local SQLite database. Nothing leaves your machine
+- 🔑 **Field Locking** — Click the 🔒 icon next to any field to save it across sessions (great for your salutation, valediction, or frequently used recipients)
+- 👤 **Sender Profiles** — Save multiple sender profiles (e.g. different email addresses or addresses) and load them with one click
+- 🖋️ **Font Selection** — Choose between **Arial** or **Times New Roman** for the generated document
+- 📦 **One-Page Enforced** — Built-in character limits per paragraph keep your letter on a single page
+- 📱 **Responsive UI** — Works on mobile phones and desktop browsers
 
+---
 
+## 🚀 Quick Start
 
-new template:
+### Prerequisites
 
-{sender_name}
-{sender_address_line1}
-{sender_address_line2}
-{sender_postal_code} {sender_city}
+- Python 3.10+
+- pip
 
-{recipient_company}
-{recipient_address_line1}
-{recipient_address_line2}
-{recipient_postal_code} {recipient_city}
+### 1. Clone the repository
 
-		{place}, den {date}
+```bash
+git clone https://github.com/elhaj101/applyfly.git
+cd applyfly
+```
 
-Bewerbung als {job_position} (Kennziffer {reference_number})
+### 2. Create and activate a virtual environment
 
-{salutation}
+```bash
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
 
-mit großer Begeisterung bewerbe ich mich als qualifizierte und leidenschaftliche {target_language} {job_title}. Durch mein {education_background} sowie meine langjährige Erfahrung im {experience_area1} und in einem {experience_area2} verfüge ich über das ideale Rüstzeug, um umfassende Fertigkeiten in {skills_list} zu vermitteln.
+### 3. Install dependencies
 
-Aktuell bin ich unter anderem als {current_position} an einem {current_institution} tätig und verfasse parallel dazu meine {thesis_type} in {thesis_topic}. Meine bisherigen Tätigkeiten an einem {previous_institution} beinhalteten unter anderem das Erstellen von {responsibility1} und {responsibility2}. Im Rahmen meiner Lehrtätigkeit in einer {previous_context} habe ich einen {specific_course} mit {target_audience} geleitet. Dabei lag der Fokus auf der selbstständigen Erstellung von {created_materials} sowie der Vermittlung von {taught_skills}.
+```bash
+pip install -r requirements.txt
+```
 
-Während meines Studiums verbrachte ich regelmäßig Zeit {immersion_experience}. Von {internship_start} bis {internship_end} engagierte ich mich {internship_type} bei {organization}. Die Tätigkeiten fanden ausschließlich auf {language} statt, und ich war aktiv an der Entwicklung und Umsetzung von {developed_concepts} beteiligt.
+### 4. Run the app
 
-Durch meine Tätigkeiten habe ich meine {soft_skill1} und {soft_skill2} enorm erweitert. Eine effektive Zusammenarbeit im Team war unerlässlich. Darüber hinaus war eine klare und effektive Kommunikation entscheidend für den Erfolg meiner Tätigkeiten.
+```bash
+streamlit run app.py
+```
 
-Mit meiner Leidenschaft für die {language} und meiner umfangreichen Expertise bin ich überzeugt, dass ich eine wertvolle Bereicherung für Ihr Team darstellen kann. Ich freue mich auf Ihre Einladung.
+The app will open automatically in your browser at `http://localhost:8501`.
 
-{closing}
+---
 
-{full_name}
+## 📁 Project Structure
+
+```
+applyfly/
+├── app.py                  # Main Streamlit application
+├── database.py             # SQLite database logic (users, profiles, locked fields)
+├── requirements.txt        # Python dependencies
+├── cover/
+│   ├── din5008_bewerbung_vorlage.docx  # DIN 5008 Word template
+│   └── PLATZHALTER_REFERENZ.md         # Placeholder reference & formatting standards
+└── README.md
+```
+
+---
+
+## 📐 DIN 5008 Standards Applied
+
+The generated `.docx` file strictly follows the official DIN 5008 (Form B) recommendations:
+
+| Property | Value |
+|---|---|
+| Top Margin | 35 mm |
+| Bottom Margin | 20 mm |
+| Left Margin | 25 mm |
+| Right Margin | 20 mm |
+| Font Size (body) | 11 pt |
+| Line Spacing | 1.15 |
+| Text Alignment | Left-aligned (Flattersatz) |
+| Date Position | Right-aligned |
+| Subject Line | Bold, left-aligned |
+
+---
+
+## 🔒 The Lock System
+
+Every lockable input field has a 🔒 icon next to it:
+
+- **Grey (🔒 dimmed)** = field is not locked, value is entered fresh each time
+- **Coloured (🔒 bright)** = field is locked — the current value is saved to your local database and will be **auto-filled on your next login**
+
+Click the icon once to toggle. No page reload, no data leaves your device.
+
+---
+
+## 📝 How to Use
+
+1. **Sign Up / Log In** — Create a local account (stored only on your device)
+2. **Create a Sender Profile** — Go to the "Manage Profiles" tab and save your personal details
+3. **Generate a Cover Letter** — In the "Generate Document" tab:
+   - Select your sender profile
+   - Fill in recipient details
+   - Choose your font
+   - Write your letter in the structured paragraph boxes
+   - Click **Generate Document** and download the `.docx` file
+4. **Export to PDF** — Open the downloaded file in Apple Pages or Word and export as PDF before sending
+
+---
+
+## 🛠️ Tech Stack
+
+| Technology | Purpose |
+|---|---|
+| [Streamlit](https://streamlit.io) | Web UI framework |
+| [python-docx](https://python-docx.readthedocs.io) | Word document generation |
+| [SQLite](https://sqlite.org) + [Werkzeug](https://werkzeug.palletsprojects.com) | Local database & password hashing |
+
+---
+
+## 🤝 Contributing
+
+Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
+
+---
+
+## 📜 License
+
+MIT License — feel free to use, modify, and distribute.
+
+---
+
+<div align="center">
+Made with ❤️ for the German job market
+</div>

@@ -4,15 +4,17 @@ import datetime
 import io
 import os
 import base64
-import numpy as np
-from PIL import Image
-from streamlit_drawable_canvas import st_canvas
 from docx import Document
 from docx.shared import Mm
 from docx.enum.text import WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.text.paragraph import Paragraph
 from database import init_db, create_user, verify_user, save_profile, get_all_profiles, delete_profile, save_locked_field, get_locked_fields, delete_locked_field
+
+# Custom HTML5 signature pad (handles touch on mobile + mouse on desktop)
+_SIGNATURE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "components", "signature_pad")
+_signature_pad = components.declare_component("signature_pad", path=_SIGNATURE_DIR)
+
 
 def _insert_paragraph_before(paragraph):
     """Create and return a new empty paragraph directly above `paragraph`."""
@@ -224,30 +226,24 @@ else:
             new_phone = st.text_input("Phone Number")
             new_email = st.text_input("Email Address")
 
-            st.markdown("**Signature (optional)** — draw with your finger on mobile or mouse on desktop.")
-            sig_canvas = st_canvas(
-                fill_color="rgba(0, 0, 0, 0)",
-                stroke_width=2,
-                stroke_color="#000000",
-                background_color="#FFFFFF",
-                height=160,
-                width=400,
-                drawing_mode="freedraw",
-                key="signature_canvas",
-            )
-            st.caption("Tip: use the toolbar above the box to undo or clear your drawing.")
+            st.markdown("**Signature (optional)**")
+            st.caption("Press **Draw** to activate the pad, sign with your finger (mobile) or mouse (desktop), then press **OK** to confirm before saving.")
+            if "sig_pad_ver" not in st.session_state:
+                st.session_state.sig_pad_ver = 0
+            sig_dataurl = _signature_pad(key=f"signature_pad_{st.session_state.sig_pad_ver}", default="")
+            if sig_dataurl:
+                st.success("Signature confirmed — it will be saved with this profile.")
 
             if st.button("Save Profile"):
                 if new_profile_name and new_name and new_street and new_zip and new_city and new_phone and new_email:
-                    # Convert the drawn signature (if any) to a base64 PNG
+                    # The component returns a data URL ("data:image/png;base64,....");
+                    # keep just the base64 payload to match the stored format.
                     signature_b64 = ""
-                    if sig_canvas is not None and sig_canvas.image_data is not None:
-                        arr = sig_canvas.image_data.astype("uint8")
-                        if arr[:, :, 3].any():  # something was actually drawn
-                            buf = io.BytesIO()
-                            Image.fromarray(arr, "RGBA").save(buf, format="PNG")
-                            signature_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                    if sig_dataurl and "," in sig_dataurl:
+                        signature_b64 = sig_dataurl.split(",", 1)[1]
                     save_profile(st.session_state.user_email, new_profile_name, new_name, new_street, new_phone, new_email, new_city, new_zip, signature_b64)
+                    # Reset the pad so the next new profile starts blank
+                    st.session_state.sig_pad_ver += 1
                     st.success("Profile saved successfully!")
                     st.rerun()
                 else:

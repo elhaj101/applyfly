@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+  html, body { margin: 0; padding: 0; font-family: "Source Sans Pro", sans-serif; }
+  #wrap { padding: 4px; }
+  #controls { display: flex; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+  button {
+    border: 1px solid #ccc; background: #f6f6f6; border-radius: 6px;
+    padding: 8px 14px; font-size: 14px; cursor: pointer; touch-action: manipulation;
+  }
+  button:active { background: #e9e9e9; }
+  #draw.on { background: #2e7d32; color: #fff; border-color: #2e7d32; }
+  #ok { background: #1565c0; color: #fff; border-color: #1565c0; }
+  #pad {
+    border: 2px dashed #bbb; border-radius: 8px; background: #fff;
+    display: block; touch-action: none; width: 100%; max-width: 600px;
+  }
+  #pad.active { border: 2px solid #2e7d32; }
+  #status { font-size: 13px; color: #555; margin-top: 6px; min-height: 18px; }
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="controls">
+      <button id="draw" type="button">✏️ Draw</button>
+      <button id="clear" type="button">Clear</button>
+      <button id="ok" type="button">OK</button>
+    </div>
+    <canvas id="pad" height="170"></canvas>
+    <div id="status">Press <b>Draw</b> to start signing.</div>
+  </div>
+
+<script>
+  // --- Minimal Streamlit component protocol (no build step needed) ---
+  function post(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+  function ready()        { post("streamlit:componentReady", { apiVersion: 1 }); }
+  function setHeight(h)   { post("streamlit:setFrameHeight", { height: h }); }
+  function setValue(v)    { post("streamlit:setComponentValue", { value: v, dataType: "json" }); }
+
+  var canvas = document.getElementById("pad");
+  var ctx = canvas.getContext("2d");
+  var drawing = false, enabled = false, hasDrawn = false;
+
+  function sizeCanvas() {
+    var w = Math.max(240, Math.min(document.body.clientWidth - 8, 600));
+    canvas.width = w;            // setting width resets the context
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#000000";
+  }
+
+  function point(e) {
+    var r = canvas.getBoundingClientRect();
+    var t = (e.touches && e.touches[0]) ? e.touches[0] : e;
+    // map CSS pixels -> canvas buffer pixels
+    var sx = canvas.width / r.width, sy = canvas.height / r.height;
+    return { x: (t.clientX - r.left) * sx, y: (t.clientY - r.top) * sy };
+  }
+
+  function start(e) { if (!enabled) return; drawing = true; var p = point(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); }
+  function move(e)  { if (!enabled || !drawing) return; var p = point(e); ctx.lineTo(p.x, p.y); ctx.stroke(); hasDrawn = true; e.preventDefault(); }
+  function stop()   { drawing = false; }
+
+  canvas.addEventListener("mousedown", start);
+  canvas.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", stop);
+  canvas.addEventListener("touchstart", start, { passive: false });
+  canvas.addEventListener("touchmove", move, { passive: false });
+  canvas.addEventListener("touchend", stop);
+
+  document.getElementById("draw").onclick = function () {
+    enabled = true;
+    this.classList.add("on");
+    canvas.classList.add("active");
+    document.getElementById("status").textContent = "Sign in the box, then press OK to confirm.";
+  };
+  document.getElementById("clear").onclick = function () {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    hasDrawn = false;
+    document.getElementById("status").textContent = "Cleared. Sign again, then press OK.";
+  };
+  document.getElementById("ok").onclick = function () {
+    if (!hasDrawn) {
+      setValue("");
+      document.getElementById("status").textContent = "Nothing drawn yet — press Draw and sign first.";
+      return;
+    }
+    setValue(canvas.toDataURL("image/png"));
+    enabled = false;
+    document.getElementById("draw").classList.remove("on");
+    canvas.classList.remove("active");
+    document.getElementById("status").textContent = "Signature confirmed ✔ — now press “Save Profile” below.";
+  };
+
+  // Streamlit lifecycle
+  window.addEventListener("message", function (event) {
+    if (event.data && event.data.type === "streamlit:render") { /* no args needed */ }
+  });
+
+  sizeCanvas();
+  ready();
+  setHeight(canvas.height + 70);
+</script>
+</body>
+</html>

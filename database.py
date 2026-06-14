@@ -1,6 +1,9 @@
 import os
+from contextlib import contextmanager
+
 import psycopg2
 from psycopg2 import errors as pg_errors
+from psycopg2 import pool as pg_pool
 from werkzeug.security import generate_password_hash, check_password_hash
 
 
@@ -27,100 +30,134 @@ def _get_db_url():
     return url
 
 
+def _build_pool():
+    # Reused across reruns/sessions so we don't pay a new TCP+TLS handshake to
+    # Supabase on every query (that latency was stalling post-login reruns).
+    return pg_pool.ThreadedConnectionPool(1, 10, dsn=_get_db_url())
+
+
+# Cache the pool with st.cache_resource when Streamlit is available; fall back to
+# a plain module-level singleton otherwise (e.g. scripts/tests).
+try:
+    import streamlit as st
+    _get_pool = st.cache_resource(_build_pool)
+except Exception:
+    _POOL = None
+
+    def _get_pool():
+        global _POOL
+        if _POOL is None:
+            _POOL = _build_pool()
+        return _POOL
+
+
 def get_connection():
+    """Direct (unpooled) connection — kept for ad-hoc scripts/maintenance."""
     return psycopg2.connect(_get_db_url())
 
 
+@contextmanager
+def _cursor(commit=False):
+    pool = _get_pool()
+    conn = pool.getconn()
+    # Drop a connection the server may have closed while idle.
+    if getattr(conn, "closed", 0):
+        pool.putconn(conn, close=True)
+        conn = pool.getconn()
+    try:
+        cur = conn.cursor()
+        yield cur
+        if commit:
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            pool.putconn(conn)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def init_db():
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            email TEXT UNIQUE NOT NULL,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            password_hash TEXT NOT NULL
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS sender_profiles (
-            id SERIAL PRIMARY KEY,
-            user_email TEXT NOT NULL,
-            profile_name TEXT NOT NULL,
-            name TEXT NOT NULL,
-            street TEXT NOT NULL,
-            phone TEXT NOT NULL,
-            email TEXT NOT NULL,
-            city TEXT DEFAULT '',
-            zip_code TEXT DEFAULT '',
-            signature TEXT DEFAULT ''
-        )
-    ''')
-    # Migration for adding signature to pre-existing profile tables
-    c.execute("ALTER TABLE sender_profiles ADD COLUMN IF NOT EXISTS signature TEXT DEFAULT ''")
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS user_locked_fields (
-            user_email TEXT NOT NULL,
-            field_key TEXT NOT NULL,
-            field_value TEXT NOT NULL,
-            PRIMARY KEY (user_email, field_key)
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    with _cursor(commit=True) as c:
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                first_name TEXT NOT NULL,
+                last_name TEXT NOT NULL,
+                password_hash TEXT NOT NULL
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS sender_profiles (
+                id SERIAL PRIMARY KEY,
+                user_email TEXT NOT NULL,
+                profile_name TEXT NOT NULL,
+                name TEXT NOT NULL,
+                street TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                email TEXT NOT NULL,
+                city TEXT DEFAULT '',
+                zip_code TEXT DEFAULT '',
+                signature TEXT DEFAULT ''
+            )
+        ''')
+        # Migration for adding signature to pre-existing profile tables
+        c.execute("ALTER TABLE sender_profiles ADD COLUMN IF NOT EXISTS signature TEXT DEFAULT ''")
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS user_locked_fields (
+                user_email TEXT NOT NULL,
+                field_key TEXT NOT NULL,
+                field_value TEXT NOT NULL,
+                PRIMARY KEY (user_email, field_key)
+            )
+        ''')
 
 
 def create_user(email, first_name, last_name, password):
-    conn = get_connection()
-    c = conn.cursor()
     try:
-        password_hash = generate_password_hash(password)
-        c.execute(
-            'INSERT INTO users (email, first_name, last_name, password_hash) VALUES (%s, %s, %s, %s)',
-            (email, first_name, last_name, password_hash),
-        )
-        conn.commit()
+        with _cursor(commit=True) as c:
+            password_hash = generate_password_hash(password)
+            c.execute(
+                'INSERT INTO users (email, first_name, last_name, password_hash) VALUES (%s, %s, %s, %s)',
+                (email, first_name, last_name, password_hash),
+            )
         return True
     except (pg_errors.UniqueViolation, psycopg2.IntegrityError):
-        conn.rollback()
         return False
-    finally:
-        conn.close()
 
 
 def verify_user(email, password):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute('SELECT password_hash FROM users WHERE email = %s', (email,))
-    row = c.fetchone()
-    conn.close()
-    if row and check_password_hash(row[0], password):
-        return True
-    return False
+    with _cursor() as c:
+        c.execute('SELECT password_hash FROM users WHERE email = %s', (email,))
+        row = c.fetchone()
+    return bool(row and check_password_hash(row[0], password))
 
 
 def save_profile(user_email, profile_name, name, street, phone, email, city, zip_code, signature=''):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO sender_profiles (user_email, profile_name, name, street, phone, email, city, zip_code, signature)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-    ''', (user_email, profile_name, name, street, phone, email, city, zip_code, signature))
-    conn.commit()
-    conn.close()
+    with _cursor(commit=True) as c:
+        c.execute('''
+            INSERT INTO sender_profiles (user_email, profile_name, name, street, phone, email, city, zip_code, signature)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (user_email, profile_name, name, street, phone, email, city, zip_code, signature))
 
 
 def get_all_profiles(user_email):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute(
-        'SELECT id, profile_name, name, street, phone, email, city, zip_code, signature '
-        'FROM sender_profiles WHERE user_email = %s ORDER BY id',
-        (user_email,),
-    )
-    rows = c.fetchall()
-    conn.close()
+    with _cursor() as c:
+        c.execute(
+            'SELECT id, profile_name, name, street, phone, email, city, zip_code, signature '
+            'FROM sender_profiles WHERE user_email = %s ORDER BY id',
+            (user_email,),
+        )
+        rows = c.fetchall()
     profiles = []
     for row in rows:
         profiles.append({
@@ -138,37 +175,26 @@ def get_all_profiles(user_email):
 
 
 def delete_profile(profile_id, user_email):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute('DELETE FROM sender_profiles WHERE id = %s AND user_email = %s', (profile_id, user_email))
-    conn.commit()
-    conn.close()
+    with _cursor(commit=True) as c:
+        c.execute('DELETE FROM sender_profiles WHERE id = %s AND user_email = %s', (profile_id, user_email))
 
 
 def save_locked_field(user_email, field_key, field_value):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO user_locked_fields (user_email, field_key, field_value)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (user_email, field_key) DO UPDATE SET field_value = EXCLUDED.field_value
-    ''', (user_email, field_key, field_value))
-    conn.commit()
-    conn.close()
+    with _cursor(commit=True) as c:
+        c.execute('''
+            INSERT INTO user_locked_fields (user_email, field_key, field_value)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_email, field_key) DO UPDATE SET field_value = EXCLUDED.field_value
+        ''', (user_email, field_key, field_value))
 
 
 def get_locked_fields(user_email):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute('SELECT field_key, field_value FROM user_locked_fields WHERE user_email = %s', (user_email,))
-    rows = c.fetchall()
-    conn.close()
+    with _cursor() as c:
+        c.execute('SELECT field_key, field_value FROM user_locked_fields WHERE user_email = %s', (user_email,))
+        rows = c.fetchall()
     return {row[0]: row[1] for row in rows}
 
 
 def delete_locked_field(user_email, field_key):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute('DELETE FROM user_locked_fields WHERE user_email = %s AND field_key = %s', (user_email, field_key))
-    conn.commit()
-    conn.close()
+    with _cursor(commit=True) as c:
+        c.execute('DELETE FROM user_locked_fields WHERE user_email = %s AND field_key = %s', (user_email, field_key))

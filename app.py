@@ -5,7 +5,7 @@ import io
 import os
 import base64
 from docx import Document
-from docx.shared import Mm
+from docx.shared import Mm, Pt
 from docx.enum.text import WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.text.paragraph import Paragraph
@@ -38,8 +38,13 @@ def vorlage_befuellen(vorlagen_pfad: str, daten: dict, selected_font: str = "Ari
         for p in dok.paragraphs:
             if '{{ABSENDER_VOLLNAME}}' in p.text:
                 sig_para = _insert_paragraph_before(p)
+                # Tight spacing so the signature sits close to the name above/below
+                pf = sig_para.paragraph_format
+                pf.space_before = Pt(0)
+                pf.space_after = Pt(0)
+                pf.line_spacing = 1.0
                 sig_run = sig_para.add_run()
-                sig_run.add_picture(io.BytesIO(signature_bytes), width=Mm(45))
+                sig_run.add_picture(io.BytesIO(signature_bytes), width=Mm(38))
                 break
 
     # Optional paragraph removal: remove any paragraph that only contains an empty placeholder
@@ -74,17 +79,18 @@ def vorlage_befuellen(vorlagen_pfad: str, daten: dict, selected_font: str = "Ari
     puffer.seek(0)
     return puffer.getvalue()
 
-# Initialize DB on start
-try:
-    init_db()
-except Exception as e:
-    import streamlit as _st
-    _st.error(
-        "Could not connect to the database. Make sure DATABASE_URL is set in "
-        "the app's Secrets (Supabase connection string).\n\n"
-        f"Details: {e}"
-    )
-    st.stop()
+# Initialize DB once per session (not on every rerun)
+if not st.session_state.get("db_ready"):
+    try:
+        init_db()
+        st.session_state["db_ready"] = True
+    except Exception as e:
+        st.error(
+            "Could not connect to the database. Make sure DATABASE_URL is set in "
+            "the app's Secrets (Supabase connection string).\n\n"
+            f"Details: {e}"
+        )
+        st.stop()
 
 st.set_page_config(page_title="applyfly", page_icon="📄", layout="wide")
 
@@ -155,7 +161,7 @@ if "user_email" not in st.session_state:
     st.session_state.user_email = ""
 
 def login_flow():
-    st.title("Welcome to applyfly")
+    st.title("Welcome to :red[applyfly]")
     st.subheader("Your Privacy-First German Cover Letter Formatter")
     
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
@@ -209,10 +215,13 @@ else:
         st.session_state.user_email = ""
         st.rerun()
         
-    st.title("applyfly Dashboard")
-    
+    st.title(":red[applyfly] Dashboard")
+
+    # Fetch profiles once per run; both tabs reuse this.
+    profiles = get_all_profiles(st.session_state.user_email)
+
     tab_gen, tab_prof = st.tabs(["📄 Generate Document", "💾 Manage Profiles"])
-    
+
     with tab_prof:
         st.header("Manage Sender Profiles")
         
@@ -251,7 +260,6 @@ else:
                     
         # List and delete profiles
         st.subheader("Saved Profiles")
-        profiles = get_all_profiles(st.session_state.user_email)
         if not profiles:
             st.info("No saved profiles found.")
         else:
@@ -319,8 +327,7 @@ else:
                 )
 
             return input_val
-        
-        profiles = get_all_profiles(st.session_state.user_email)
+
         profile_options = {p['profile_name']: p for p in profiles}
         
         selected_profile_name = st.selectbox("Select Sender Profile", options=["-- Select a Profile --"] + list(profile_options.keys()))

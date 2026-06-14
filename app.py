@@ -50,7 +50,16 @@ def vorlage_befuellen(vorlagen_pfad: str, daten: dict, selected_font: str = "Ari
     return puffer.getvalue()
 
 # Initialize DB on start
-init_db()
+try:
+    init_db()
+except Exception as e:
+    import streamlit as _st
+    _st.error(
+        "Could not connect to the database. Make sure DATABASE_URL is set in "
+        "the app's Secrets (Supabase connection string).\n\n"
+        f"Details: {e}"
+    )
+    st.stop()
 
 st.set_page_config(page_title="applyfly", page_icon="📄", layout="wide")
 
@@ -105,9 +114,10 @@ def login_flow():
         login_email = st.text_input("Email", key="login_email")
         login_password = st.text_input("Password", type="password", key="login_password")
         if st.button("Login"):
-            if verify_user(login_email, login_password):
+            login_email_norm = login_email.strip().lower()
+            if verify_user(login_email_norm, login_password):
                 st.session_state.logged_in = True
-                st.session_state.user_email = login_email
+                st.session_state.user_email = login_email_norm
                 st.success("Logged in successfully!")
                 st.rerun()
             else:
@@ -122,12 +132,15 @@ def login_flow():
         signup_password_confirm = st.text_input("Confirm Password", type="password")
         
         if st.button("Sign Up"):
+            signup_email_norm = signup_email.strip().lower()
             if signup_password != signup_password_confirm:
                 st.error("Passwords do not match.")
-            elif not signup_email or not signup_first_name or not signup_last_name or not signup_password:
+            elif not signup_email_norm or not signup_first_name.strip() or not signup_last_name.strip() or not signup_password:
                 st.error("Please fill in all fields.")
+            elif "@" not in signup_email_norm or "." not in signup_email_norm.split("@")[-1]:
+                st.error("Please enter a valid email address.")
             else:
-                if create_user(signup_email, signup_first_name, signup_last_name, signup_password):
+                if create_user(signup_email_norm, signup_first_name.strip(), signup_last_name.strip(), signup_password):
                     st.success("Account created successfully! You can now log in.")
                 else:
                     st.error("Email already exists.")
@@ -138,6 +151,9 @@ else:
     # Main Dashboard Sidebar
     st.sidebar.title(f"Hello, {st.session_state.user_email.split('@')[0]}!")
     if st.sidebar.button("Logout"):
+        # Clear everything so the next user starts clean (no leftover locks/inputs)
+        for _k in list(st.session_state.keys()):
+            del st.session_state[_k]
         st.session_state.logged_in = False
         st.session_state.user_email = ""
         st.rerun()
@@ -195,21 +211,29 @@ else:
         def render_locked_input(label, key, default_val="", is_textarea=False, **kwargs):
             col_lock, col_input = st.columns([1, 11])
             locked = key in locked_fields
-            
+            input_key = f"input_{key}"
+
+            # When a *locked* field is edited, persist the new value so it
+            # survives refresh and logout without re-toggling the lock.
+            def _on_input_change(k=key):
+                if st.session_state.get(f"check_lock_{k}"):
+                    current_val = st.session_state.get(f"input_{k}", default_val)
+                    save_locked_field(st.session_state.user_email, k, current_val)
+                    st.session_state.locks[k] = current_val
+
             with col_input:
                 # Show locked value if available, otherwise default
                 val = locked_fields.get(key, default_val)
-                input_key = f"input_{key}"
                 if is_textarea:
-                    input_val = st.text_area(label, value=val, key=input_key, **kwargs)
+                    input_val = st.text_area(label, value=val, key=input_key, on_change=_on_input_change, **kwargs)
                 else:
-                    input_val = st.text_input(label, value=val, key=input_key, **kwargs)
-            
+                    input_val = st.text_input(label, value=val, key=input_key, on_change=_on_input_change, **kwargs)
+
             with col_lock:
                 st.write("")
                 st.write("")
                 # on_change callback fires immediately when toggled — no rerun needed
-                def _on_toggle(k=key, get_val=lambda: st.session_state.get(f"input_{key}", default_val)):
+                def _on_toggle(k=key):
                     new_state = st.session_state[f"check_lock_{k}"]
                     current_val = st.session_state.get(f"input_{k}", default_val)
                     if new_state:
@@ -218,14 +242,14 @@ else:
                     else:
                         delete_locked_field(st.session_state.user_email, k)
                         st.session_state.locks.pop(k, None)
-                
+
                 st.checkbox(
                     "🔒",
                     value=locked,
                     key=f"check_lock_{key}",
                     on_change=_on_toggle,
                 )
-                    
+
             return input_val
         
         profiles = get_all_profiles(st.session_state.user_email)
@@ -261,9 +285,7 @@ else:
         st.subheader("Letter Contents")
         salutation = render_locked_input("Salutation", "salutation", default_val="Sehr geehrte Damen und Herren,", max_chars=100)
         einleitung = render_locked_input("Introduction (Paragraph 1)", "einleitung", is_textarea=True, max_chars=400, placeholder="Max 400 characters to keep it on one page...")
-        absatz1 = render_locked_input("Main Body Paragraph 1", "absatz1", is_textarea=True, max_chars=800, placeholder="Max 800 characters to keep it on one page...")
-        absatz2 = render_locked_input("Main Body Paragraph 2", "absatz2", is_textarea=True, max_chars=800, placeholder="Max 800 characters to keep it on one page...")
-        absatz3 = render_locked_input("Main Body Paragraph 3 (optional)", "absatz3", is_textarea=True, max_chars=600, placeholder="Max 600 characters to keep it on one page...")
+        body = render_locked_input("Cover Letter Body", "body", is_textarea=True, max_chars=2000, height=260, placeholder="Write the full body of your cover letter here. Separate paragraphs with a blank line. Keep it concise to stay on one page.")
         schlusssatz = render_locked_input("Closing Sentence", "schlusssatz", default_val="Ich freue mich auf Ihre Einladung.", max_chars=200, placeholder="Max 200 characters...")
         grussformel = render_locked_input("Valediction", "grussformel", default_val="Mit freundlichen Grüßen,", max_chars=100)
         
@@ -273,6 +295,13 @@ else:
                 st.error(f"Template '{template_path}' not found.")
             else:
                 try:
+                    # Split the single body into up to 3 paragraphs (blank line =
+                    # paragraph break) to fill the template's body placeholders.
+                    body_parts = [p.strip() for p in body.split("\n\n") if p.strip()]
+                    absatz1 = body_parts[0] if len(body_parts) > 0 else ""
+                    absatz2 = body_parts[1] if len(body_parts) > 1 else ""
+                    absatz3 = "\n".join(body_parts[2:]) if len(body_parts) > 2 else ""
+
                     daten = {
                         "ABSENDER_NAME": sender_name,
                         "ABSENDER_STRASSE": sender_street,

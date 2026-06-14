@@ -53,9 +53,12 @@ def init_db():
             phone TEXT NOT NULL,
             email TEXT NOT NULL,
             city TEXT DEFAULT '',
-            zip_code TEXT DEFAULT ''
+            zip_code TEXT DEFAULT '',
+            signature TEXT DEFAULT ''
         )
     ''')
+    # Migration for adding signature to pre-existing profile tables
+    c.execute("ALTER TABLE sender_profiles ADD COLUMN IF NOT EXISTS signature TEXT DEFAULT ''")
     c.execute('''
         CREATE TABLE IF NOT EXISTS user_locked_fields (
             user_email TEXT NOT NULL,
@@ -97,13 +100,13 @@ def verify_user(email, password):
     return False
 
 
-def save_profile(user_email, profile_name, name, street, phone, email, city, zip_code):
+def save_profile(user_email, profile_name, name, street, phone, email, city, zip_code, signature=''):
     conn = get_connection()
     c = conn.cursor()
     c.execute('''
-        INSERT INTO sender_profiles (user_email, profile_name, name, street, phone, email, city, zip_code)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-    ''', (user_email, profile_name, name, street, phone, email, city, zip_code))
+        INSERT INTO sender_profiles (user_email, profile_name, name, street, phone, email, city, zip_code, signature)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ''', (user_email, profile_name, name, street, phone, email, city, zip_code, signature))
     conn.commit()
     conn.close()
 
@@ -112,7 +115,7 @@ def get_all_profiles(user_email):
     conn = get_connection()
     c = conn.cursor()
     c.execute(
-        'SELECT id, profile_name, name, street, phone, email, city, zip_code '
+        'SELECT id, profile_name, name, street, phone, email, city, zip_code, signature '
         'FROM sender_profiles WHERE user_email = %s ORDER BY id',
         (user_email,),
     )
@@ -129,6 +132,7 @@ def get_all_profiles(user_email):
             'email': row[5],
             'city': row[6],
             'zip_code': row[7],
+            'signature': row[8] or '',
         })
     return profiles
 

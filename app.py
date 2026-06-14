@@ -1,13 +1,27 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import datetime
 import io
 import os
+import base64
+import numpy as np
+from PIL import Image
+from streamlit_drawable_canvas import st_canvas
 from docx import Document
 from docx.shared import Mm
 from docx.enum.text import WD_LINE_SPACING
+from docx.oxml import OxmlElement
+from docx.text.paragraph import Paragraph
 from database import init_db, create_user, verify_user, save_profile, get_all_profiles, delete_profile, save_locked_field, get_locked_fields, delete_locked_field
 
-def vorlage_befuellen(vorlagen_pfad: str, daten: dict, selected_font: str = "Arial") -> bytes:
+def _insert_paragraph_before(paragraph):
+    """Create and return a new empty paragraph directly above `paragraph`."""
+    new_p = OxmlElement('w:p')
+    paragraph._p.addprevious(new_p)
+    return Paragraph(new_p, paragraph._parent)
+
+
+def vorlage_befuellen(vorlagen_pfad: str, daten: dict, selected_font: str = "Arial", signature_bytes: bytes = None) -> bytes:
     dok = Document(vorlagen_pfad)
 
     # Enforce margins
@@ -16,6 +30,15 @@ def vorlage_befuellen(vorlagen_pfad: str, daten: dict, selected_font: str = "Ari
         section.bottom_margin = Mm(20)
         section.left_margin = Mm(25)
         section.right_margin = Mm(20)
+
+    # Insert the signature image just above the sender's full name, if provided
+    if signature_bytes:
+        for p in dok.paragraphs:
+            if '{{ABSENDER_VOLLNAME}}' in p.text:
+                sig_para = _insert_paragraph_before(p)
+                sig_run = sig_para.add_run()
+                sig_run.add_picture(io.BytesIO(signature_bytes), width=Mm(45))
+                break
 
     # Optional paragraph removal: remove any paragraph that only contains an empty placeholder
     placeholders_to_check = [
@@ -94,8 +117,34 @@ div[data-testid="stCheckbox"]:has(input:checked) {
     filter: none;
     opacity: 1;
 }
+
+/* --- Prevent the UI from fading/dimming during reruns --- */
+[data-stale="true"] { opacity: 1 !important; }
+.element-container { opacity: 1 !important; transition: none !important; }
+.stApp [data-testid="stStatusWidget"] { transition: none !important; }
 </style>
 """, unsafe_allow_html=True)
+
+# Disable browser autofill/autocorrect on all inputs. Autofill was writing into
+# fields, firing reruns (the periodic fade) and occasionally causing errors.
+components.html(
+    """
+    <script>
+    const doc = window.parent.document;
+    function disableAutofill() {
+        doc.querySelectorAll('input, textarea').forEach(function (el) {
+            el.setAttribute('autocomplete', el.type === 'password' ? 'new-password' : 'off');
+            el.setAttribute('autocorrect', 'off');
+            el.setAttribute('autocapitalize', 'off');
+            el.setAttribute('spellcheck', 'false');
+        });
+    }
+    disableAutofill();
+    new MutationObserver(disableAutofill).observe(doc.body, {childList: true, subtree: true});
+    </script>
+    """,
+    height=0,
+)
 
 # Initialize session state variables
 if "logged_in" not in st.session_state:
@@ -174,10 +223,31 @@ else:
             new_city = st.text_input("City")
             new_phone = st.text_input("Phone Number")
             new_email = st.text_input("Email Address")
-            
+
+            st.markdown("**Signature (optional)** — draw with your finger on mobile or mouse on desktop.")
+            sig_canvas = st_canvas(
+                fill_color="rgba(0, 0, 0, 0)",
+                stroke_width=2,
+                stroke_color="#000000",
+                background_color="#FFFFFF",
+                height=160,
+                width=400,
+                drawing_mode="freedraw",
+                key="signature_canvas",
+            )
+            st.caption("Tip: use the toolbar above the box to undo or clear your drawing.")
+
             if st.button("Save Profile"):
                 if new_profile_name and new_name and new_street and new_zip and new_city and new_phone and new_email:
-                    save_profile(st.session_state.user_email, new_profile_name, new_name, new_street, new_phone, new_email, new_city, new_zip)
+                    # Convert the drawn signature (if any) to a base64 PNG
+                    signature_b64 = ""
+                    if sig_canvas is not None and sig_canvas.image_data is not None:
+                        arr = sig_canvas.image_data.astype("uint8")
+                        if arr[:, :, 3].any():  # something was actually drawn
+                            buf = io.BytesIO()
+                            Image.fromarray(arr, "RGBA").save(buf, format="PNG")
+                            signature_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                    save_profile(st.session_state.user_email, new_profile_name, new_name, new_street, new_phone, new_email, new_city, new_zip, signature_b64)
                     st.success("Profile saved successfully!")
                     st.rerun()
                 else:
@@ -193,6 +263,8 @@ else:
                 col1, col2 = st.columns([4, 1])
                 with col1:
                     st.write(f"**{p['profile_name']}** ({p['name']} - {p['email']})")
+                    if p.get('signature'):
+                        st.image(base64.b64decode(p['signature']), width=160, caption="Signature")
                 with col2:
                     if st.button("Delete", key=f"del_{p['id']}"):
                         delete_profile(p['id'], st.session_state.user_email)
@@ -327,7 +399,12 @@ else:
                         "ABSENDER_VOLLNAME": sender_name,
                     }
                     
-                    docx_bytes = vorlage_befuellen(template_path, daten, selected_font)
+                    # Decode the selected profile's signature, if it has one
+                    signature_bytes = None
+                    if selected_profile.get('signature'):
+                        signature_bytes = base64.b64decode(selected_profile['signature'])
+
+                    docx_bytes = vorlage_befuellen(template_path, daten, selected_font, signature_bytes)
                     
                     st.success("Document generated successfully!")
                     st.download_button(
